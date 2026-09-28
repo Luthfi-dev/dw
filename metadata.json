@@ -1,0 +1,8 @@
+{
+  "name": "OmniSave Pro – Universal Video & Audio Downloader",
+  "description": "Download video dan audio berkualitas tinggi (4K, 1080p, 720p, MP3) bebas watermark dari YouTube, TikTok, Instagram, Facebook, Twitter/X, Bilibili, Douyin, dan 1.600+ platform web dengan cepat dan aman.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
