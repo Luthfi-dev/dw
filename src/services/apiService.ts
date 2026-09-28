@@ -1,21 +1,19 @@
 import { ApiHealthStatus, ChannelResult, VideoExtractResult } from '../types';
 
-const BASE_API_URL = ''; // local proxy
 const UPSTREAM_API_URL = 'https://gendownload.com';
 
 /**
- * Helper to attempt backend proxy first, falling back to direct CORS call if necessary.
+ * Intelligent fetcher that calls local Express backend proxy with direct upstream fallback.
  */
 async function fetchWithFallback<T>(endpoint: string, options: RequestInit): Promise<T> {
   let primaryError: Error | null = null;
   
-  // Attempt 1: Local backend proxy
+  // Attempt 1: Local Express backend proxy
   try {
-    const res = await fetch(`${BASE_API_URL}${endpoint}`, options);
+    const res = await fetch(endpoint, options);
     if (res.ok) {
       return await res.json();
     }
-    // If backend gave a JSON error response
     const errBody = await res.json().catch(() => null);
     if (errBody && errBody.error) {
       throw new Error(errBody.error);
@@ -23,10 +21,10 @@ async function fetchWithFallback<T>(endpoint: string, options: RequestInit): Pro
     throw new Error(`HTTP Error ${res.status}: ${res.statusText}`);
   } catch (err: any) {
     primaryError = err;
-    console.warn(`Local proxy to ${endpoint} failed (${err.message}), trying direct upstream...`);
+    console.warn(`Local proxy to ${endpoint} failed (${err.message}), attempting upstream fallback...`);
   }
 
-  // Attempt 2: Direct upstream to https://gendownload.com
+  // Attempt 2: Direct upstream fallback
   try {
     const upstreamRes = await fetch(`${UPSTREAM_API_URL}${endpoint}`, options);
     const data = await upstreamRes.json();
@@ -86,7 +84,7 @@ export async function generateZip(
 }
 
 /**
- * Check GenDownload API status and queue load
+ * Check API status and queue load
  */
 export async function checkApiHealth(): Promise<ApiHealthStatus> {
   const start = performance.now();
@@ -95,11 +93,11 @@ export async function checkApiHealth(): Promise<ApiHealthStatus> {
     const data = await res.json();
     const duration = Math.round(performance.now() - start);
 
-    if (data.upstream && (data.upstream.ok || data.upstream.queue)) {
+    if (data.status === 'online' || (data.upstream && (data.upstream.ok || data.upstream.queue))) {
       return {
         ok: true,
         status: 'online',
-        queue: data.upstream.queue,
+        queue: data.upstream?.queue,
         responseTimeMs: duration,
         lastChecked: Date.now(),
       };
@@ -112,7 +110,6 @@ export async function checkApiHealth(): Promise<ApiHealthStatus> {
       lastChecked: Date.now(),
     };
   } catch {
-    // Attempt direct health check
     try {
       const direct = await fetch('https://gendownload.com/api/health');
       const directData = await direct.json();
