@@ -177,6 +177,71 @@ async function startServer() {
     }
   });
 
+  // Secret Developer Endpoint: GET /api/fast?link=<video_url>
+  // Extracts highest quality media and immediately redirects (302) to CDN stream URL (0% server bandwidth load)
+  app.get('/api/fast', async (req, res) => {
+    const rawLink = (req.query.link || req.query.url) as string;
+    if (!rawLink || typeof rawLink !== 'string') {
+      return res.status(400).send('Parameter "link" atau "url" diperlukan.');
+    }
+
+    try {
+      // 1. Extract media details
+      const extractRes = await fetch('https://gendownload.com/api/extract', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+        body: JSON.stringify({ url: rawLink.trim() }),
+      });
+
+      const data = await extractRes.json();
+      if (!extractRes.ok || data.error || !Array.isArray(data.formats) || data.formats.length === 0) {
+        return res.status(502).send(data.error || 'Gagal mengekstrak video.');
+      }
+
+      // 2. Determine highest quality format
+      const scoreFormat = (fmt: any): number => {
+        let score = 0;
+        const label = (fmt.label || '').toLowerCase();
+        const ext = (fmt.ext || '').toLowerCase();
+
+        // Resolution score
+        if (label.includes('4k') || label.includes('2160')) score += 10000;
+        else if (label.includes('2k') || label.includes('1440')) score += 8000;
+        else if (label.includes('1080')) score += 6000;
+        else if (label.includes('720')) score += 4000;
+        else if (label.includes('480')) score += 2000;
+        else if (label.includes('360')) score += 1000;
+
+        // MP4 / Video preference
+        if (ext === 'mp4') score += 500;
+        if (fmt.type === 'video' || !fmt.type) score += 200;
+
+        // Filesize preference if available
+        if (fmt.filesize && typeof fmt.filesize === 'number') {
+          score += Math.min(fmt.filesize / (1024 * 1024), 500);
+        }
+
+        return score;
+      };
+
+      const sortedFormats = [...data.formats].sort((a, b) => scoreFormat(b) - scoreFormat(a));
+      const bestFormat = sortedFormats[0];
+
+      if (!bestFormat || !bestFormat.url) {
+        return res.status(404).send('Format media tidak ditemukan.');
+      }
+
+      // 3. Direct 302 Redirect to upstream CDN
+      // Benefits: 0% server bandwidth consumed, high-speed CDN delivery
+      return res.redirect(302, bestFormat.url);
+    } catch (err: any) {
+      res.status(500).send('Terjadi kesalahan saat memproses: ' + err.message);
+    }
+  });
+
   // Proxy media preview
   app.get('/api/proxy-preview', async (req, res) => {
     const targetUrl = req.query.url as string;

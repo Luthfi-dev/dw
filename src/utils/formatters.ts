@@ -1,4 +1,8 @@
 /**
+ * OmniSave Pro - Smart Direct Downloader & Formatters
+ */
+
+/**
  * Format bytes to readable size like 15.4 MB, 1.2 GB
  */
 export function formatFileSize(bytes: number | null | undefined): string {
@@ -65,19 +69,93 @@ export function sanitizeFilename(name: string, ext = 'mp4'): string {
 }
 
 /**
- * Trigger file download directly on the same page without navigating or opening new tabs.
- * Uses local backend stream proxy to mask upstream source url.
+ * Smart Zero-Load Direct Downloader:
+ * 1. Fetches directly from CDN in client browser (0% hosting server bandwidth).
+ * 2. Creates a local Blob URL so the browser download manager attributes 100% to YOUR domain (blob:https://domainanda.com).
+ * 3. Gracefully falls back to stream proxy if direct browser fetch is blocked.
  */
-export function downloadFileDirectly(
+export async function downloadFileDirectly(
   sourceUrl: string,
   filename: string,
   onProgress?: (percent: number) => void
 ): Promise<boolean> {
+  // Strategy 1: Client-Side Direct CDN Stream to Local Blob (0% Server Load + 100% Domain Anda)
+  try {
+    const response = await fetch(sourceUrl, {
+      method: 'GET',
+      mode: 'cors',
+    });
+
+    if (response.ok) {
+      const contentLength = response.headers.get('content-length');
+      const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
+
+      if (response.body && totalBytes > 0 && typeof ReadableStream !== 'undefined') {
+        const reader = response.body.getReader();
+        let receivedBytes = 0;
+        const chunks: BlobPart[] = [];
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            chunks.push(value);
+            receivedBytes += value.length;
+            if (onProgress && totalBytes > 0) {
+              const percent = Math.min(Math.round((receivedBytes / totalBytes) * 100), 99);
+              onProgress(percent);
+            }
+          }
+        }
+
+        const blob = new Blob(chunks, {
+          type: response.headers.get('content-type') || 'application/octet-stream',
+        });
+        const localBlobUrl = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = localBlobUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+
+        setTimeout(() => {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(localBlobUrl);
+        }, 10000);
+
+        if (onProgress) onProgress(100);
+        return true;
+      } else {
+        const blob = await response.blob();
+        const localBlobUrl = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = localBlobUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+
+        setTimeout(() => {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(localBlobUrl);
+        }, 10000);
+
+        if (onProgress) onProgress(100);
+        return true;
+      }
+    }
+  } catch (clientErr) {
+    // Client-side fetch failed (e.g., CORS restriction or massive file), fallback to backend stream
+    console.debug('Direct client fetch fallback to stream proxy:', clientErr);
+  }
+
+  // Strategy 2: Backend Stream Proxy Fallback
   return new Promise((resolve) => {
-    // Construct internal stream URL
     const proxyUrl = `/api/download-file?url=${encodeURIComponent(sourceUrl)}&filename=${encodeURIComponent(filename)}`;
 
-    // Create an invisible iframe to initiate file download on the same page
     let iframe = document.getElementById('__direct_downloader_frame') as HTMLIFrameElement | null;
     if (!iframe) {
       iframe = document.createElement('iframe');
@@ -91,7 +169,6 @@ export function downloadFileDirectly(
 
     iframe.src = proxyUrl;
 
-    // Trigger visual callback
     if (onProgress) {
       onProgress(100);
     }
